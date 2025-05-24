@@ -44,7 +44,16 @@ def build_model(numeric_features, train_df):
     
     model = keras.Model(inputs, outputs)
     return model
+def save_model(model, path="saved_model"):
+    model.save(path)
+    
+def load_model(path="saved_model"):
+    return keras.models.load_model(path)
 
+def predict(model, input_data, numeric_features):
+    # Ensure the order of features matches training
+    input_df = pd.DataFrame([input_data])[numeric_features]
+    return model.predict(input_df)[0][0]
 
 # 3. Compile and train model
 def compile_and_train_model(model, train_df, train_labels):
@@ -81,6 +90,7 @@ def custom_pipeline(filepath):
     model.summary()
     history = compile_and_train_model(model, train_df, train_labels)
     evaluate_model(model, test_df, test_labels)
+    save_model(model) 
     return model
 
 
