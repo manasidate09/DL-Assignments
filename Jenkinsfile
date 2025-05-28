@@ -2,6 +2,12 @@ pipeline {
     agent any
 
     stages {
+	stage('Checkout Repo') {
+            steps {
+                git url: 'https://github.com/manasidate09/DL-Assignments.git', credentialsId: 'github-pat'
+            }
+        }
+
         stage('Clone Repository') {
             steps {
                 git 'https://github.com/manasidate09/DL-Assignment.git'
