@@ -1,98 +1,109 @@
 import pandas as pd
 import numpy as np
-import tensorflow as tf
-from tensorflow import keras
-from tensorflow.keras import layers
 from sklearn.model_selection import train_test_split
-import matplotlib.pyplot as plt
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.impute import SimpleImputer
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Dropout
+from tensorflow.keras.callbacks import EarlyStopping
 
+# Load dataset
+df = pd.read_csv("AmesHousing.csv")
 
-# 1. Load and preprocess data
-def load_and_preprocess_data(filepath):
-    data = pd.read_csv(filepath)
-    
-    # Drop missing target values
-    data = data.dropna(subset=["SalePrice"])
-    
-    # Select numeric features
-    numeric_features = ["Overall Qual", "Gr Liv Area", "Garage Cars", 
-                        "Total Bsmt SF", "Full Bath", "Year Built"]
-    
-    # drop SalePrice 
-    data = data[numeric_features + ["SalePrice"]].dropna()
-    
-    # Split train/test
-    train_df, test_df = train_test_split(data, test_size=0.2, random_state=42)
-    
-    # Separate features and labels
-    train_labels = train_df.pop("SalePrice")
-    test_labels = test_df.pop("SalePrice")
-    
-    return train_df, test_df, train_labels, test_labels, numeric_features
+# Drop irrelevant or high-missing columns
+df = df.drop(columns=["Order", "PID"], errors="ignore")
 
+# Split features and target
+X = df.drop("SalePrice", axis=1)
+y = np.log1p(df["SalePrice"])
+#y = df["SalePrice"]
 
-# 2. Build model
-def build_model(numeric_features, train_df):
-    normalizer = layers.Normalization()
-    normalizer.adapt(np.array(train_df))
-    
-    inputs = keras.Input(shape=(len(numeric_features),))
-    x = normalizer(inputs)
-    x = layers.Dense(64, activation='relu')(x)
-    x = layers.Dense(32, activation='relu')(x)
-    outputs = layers.Dense(1)(x)
-    
-    model = keras.Model(inputs, outputs)
-    return model
-def save_model(model, path="saved_model"):
-    model.save(path)
-    
-def load_model(path="saved_model"):
-    return keras.models.load_model(path)
+# Identify column types
+numerical_cols = X.select_dtypes(include=["int64", "float64"]).columns.tolist()
+categorical_cols = X.select_dtypes(include=["object"]).columns.tolist()
 
-def predict(model, input_data, numeric_features):
-    # Ensure the order of features matches training
-    input_df = pd.DataFrame([input_data])[numeric_features]
-    return model.predict(input_df)[0][0]
+# ---------- Custom Functional Pipeline ----------
 
-# 3. Compile and train model
-def compile_and_train_model(model, train_df, train_labels):
-    model.compile(optimizer='adam', loss='mse', metrics=['mae'])
-    
-    early_stopping = keras.callbacks.EarlyStopping(
-        monitor='val_loss', patience=10, restore_best_weights=True
-    )
-    
-    history = model.fit(
-        train_df, train_labels,
-        validation_split=0.2,
-        epochs=100,
-        batch_size=32,
-        callbacks=[early_stopping],
-        verbose=1
-    )
-    
-    return history
+def impute_numerical(X, strategy="median"):
+    imputed = X.copy()
+    for col in numerical_cols:
+        if strategy == "median":
+            fill_val = imputed[col].median()
+        elif strategy == "mean":
+            fill_val = imputed[col].mean()
+        #imputed[col].fillna(fill_val, inplace=True)
+        imputed[col] = imputed[col].fillna(fill_val)
+    return imputed
 
+def impute_categorical(X):
+    imputed = X.copy()
+    for col in categorical_cols:
+        fill_val = imputed[col].mode()[0]
+        #imputed[col].fillna(fill_val, inplace=True)
+        imputed[col] = imputed[col].fillna(fill_val)
+    return imputed
 
-# 4. Evaluate model
-def evaluate_model(model, test_df, test_labels):
-    loss, mae = model.evaluate(test_df, test_labels)
-    print(f"Test MAE: {mae:.2f}")
-    print(f"Loss: {loss:.2f}")
+def encode_categorical(X):
+    encoder = OneHotEncoder(sparse_output=False, handle_unknown="ignore")
+    #encoder = OneHotEncoder(sparse=False, handle_unknown="ignore")
+    encoded = encoder.fit_transform(X[categorical_cols])
+    encoded_df = pd.DataFrame(encoded, columns=encoder.get_feature_names_out(categorical_cols), index=X.index)
+    return encoded_df, encoder
 
+def scale_numerical(X):
+    scaler = StandardScaler()
+    scaled = scaler.fit_transform(X[numerical_cols])
+    scaled_df = pd.DataFrame(scaled, columns=numerical_cols, index=X.index)
+    return scaled_df, scaler
 
+# Preprocess
+X_num_imputed = impute_numerical(X)
+X_cat_imputed = impute_categorical(X)
 
-# === Main Pipeline ===
-def custom_pipeline(filepath):
-    train_df, test_df, train_labels, test_labels, numeric_features = load_and_preprocess_data(filepath)
-    model = build_model(numeric_features, train_df)
-    model.summary()
-    history = compile_and_train_model(model, train_df, train_labels)
-    evaluate_model(model, test_df, test_labels)
-    save_model(model) 
-    return model
+X_num_scaled, num_scaler = scale_numerical(X_num_imputed)
+X_cat_encoded, cat_encoder = encode_categorical(X_cat_imputed)
 
+# Combine
+X_processed = pd.concat([X_num_scaled, X_cat_encoded], axis=1)
+print(X_processed.columns)
 
-# === Run ===
-model = custom_pipeline("AmesHousing.csv")
+# Train-test split
+X_train, X_val, y_train, y_val = train_test_split(X_processed, y, test_size=0.2, random_state=42)
+
+# ---------- DNN Model ----------
+
+model = Sequential([
+    Dense(128, activation="relu", input_shape=(X_train.shape[1],)),
+    Dropout(0.3),
+    Dense(64, activation="relu"),
+    Dropout(0.2),
+    Dense(32, activation="relu"),
+    Dense(1)
+])
+
+model.compile(optimizer="adam", loss="mae", metrics=["mae"])
+
+early_stop = EarlyStopping(monitor="val_loss", patience=20, restore_best_weights=True)
+
+# Train
+history = model.fit(
+    X_train, y_train,
+    validation_data=(X_val, y_val),
+    epochs=100,
+    batch_size=32,
+    callbacks=[early_stop],
+    verbose=1
+)
+
+# Evaluate
+loss, mae = model.evaluate(X_val, y_val)
+print(f"Validation MAE (log scale): {mae:.4f}")
+
+# Predict and invert log transform
+y_pred_log = model.predict(X_val)
+y_pred = np.expm1(y_pred_log).flatten()
+y_actual = np.expm1(y_val).values
+
+# Final MAE on original scale
+final_mae = np.mean(np.abs(y_pred - y_actual))
+print(f"Validation MAE (original): {final_mae:.2f}")
