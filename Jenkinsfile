@@ -4,7 +4,7 @@ pipeline {
     stages {
         stage('Clone Repository') {
             steps {
-                git 'https://github.com/manasidate09/DL-Assignment'
+                git 'https://github.com/manasidate09/DL-Assignment.git'
             }
         }
 

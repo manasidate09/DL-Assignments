@@ -1,0 +1,12 @@
+flask
+click
+itsdangerous
+Jinja2
+Werkzeug
+click
+pandas
+numpy
+
+
+
+
